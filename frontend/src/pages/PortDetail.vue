@@ -21,7 +21,7 @@ const vesselStore = useVesselStore();
 const portId = computed(() => String(route.params.id ?? ''));
 const port = computed(() => portStore.portById(portId.value));
 const berthsRef = computed(() => portStore.berths);
-const { summary, summaryOf, inPortVessels } = useBerthStatus(berthsRef, portId);
+const { summary, summaryOf, inPortVessels, pendingBerths } = useBerthStatus(berthsRef, portId);
 const portBerths = computed(() => portStore.berthsOf(portId.value));
 
 const activeBerthId = ref('');
@@ -37,8 +37,9 @@ const addBerthVisible = ref(false);
 const addBerthForm = reactive({ berthNo: '', designDepth: 4.5 });
 
 const recentCalls = computed(() => {
-  const numbers = new Set(portBerths.value.map((b) => b.berthNo));
-  return portStore.callsSorted.filter((c) => numbers.has(c.berthNo)).slice(0, 8);
+  return portStore.callsSorted
+    .filter((c) => !c.voided && c.portId === portId.value)
+    .slice(0, 8);
 });
 
 const supply = computed(() => (port.value ? supplyText(port.value.supply) : '—'));
@@ -121,6 +122,23 @@ function onMapSelect(selectedPortId: string): void {
         </div>
       </header>
 
+      <el-alert
+        v-if="pendingBerths.length"
+        type="error"
+        show-icon
+        :closable="false"
+        class="pending-alert"
+        data-testid="port-pending-alert"
+      >
+        <template #title>
+          本港有 {{ pendingBerths.length }} 个泊位存在冲突的在港记录，泊位占用已暂列待核对
+        </template>
+        <template #default>
+          {{ pendingBerths.map((b) => b.berthNo).join('、') }}
+          <el-button type="danger" size="small" plain style="margin-left: 12px" @click="router.push('/reviews')">前往核对</el-button>
+        </template>
+      </el-alert>
+
       <el-row :gutter="16">
         <el-col :lg="10" :md="24">
           <PortCard :port="port" :summary="summaryOf(port.id)" :clickable="false" />
@@ -137,7 +155,7 @@ function onMapSelect(selectedPortId: string): void {
               <el-descriptions-item label="补给能力">{{ supply }}</el-descriptions-item>
             </el-descriptions>
             <p class="detail-hint">
-              当前占用率 {{ percentText(summary.occupancyRate) }}（占用 {{ summary.occupied }} / 空闲 {{ summary.free }} / 维修 {{ summary.maintenance }}）
+              当前占用率 {{ percentText(summary.occupancyRate) }}（占用 {{ summary.occupied }} / 空闲 {{ summary.free }} / 维修 {{ summary.maintenance }}<template v-if="summary.pending"> / <span class="pending-text">待核对 {{ summary.pending }}</span></template>）
             </p>
           </el-card>
         </el-col>
@@ -225,7 +243,7 @@ function onMapSelect(selectedPortId: string): void {
         <el-descriptions :column="1" size="small" border>
           <el-descriptions-item label="泊位号">{{ activeBerth.berthNo }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag size="small" :type="activeBerth.status === '占用' ? 'warning' : activeBerth.status === '维修' ? 'info' : 'success'">
+            <el-tag size="small" :type="activeBerth.status === '占用' ? 'warning' : activeBerth.status === '维修' ? 'info' : activeBerth.status === '待核对' ? 'danger' : 'success'">
               {{ activeBerth.status }}
             </el-tag>
           </el-descriptions-item>
@@ -250,8 +268,15 @@ function onMapSelect(selectedPortId: string): void {
       </template>
       <template #footer>
         <el-button @click="berthDialogVisible = false">关闭</el-button>
-        <el-button type="warning" data-testid="berth-maintenance" @click="markMaintenance">置为维修</el-button>
-        <el-button type="success" data-testid="berth-release" @click="releaseBerth">释放为空闲</el-button>
+        <template v-if="activeBerth?.status === '待核对'">
+          <el-button type="danger" data-testid="berth-goto-review" @click="berthDialogVisible = false; router.push('/reviews')">
+            前往核对
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button type="warning" data-testid="berth-maintenance" @click="markMaintenance">置为维修</el-button>
+          <el-button type="success" data-testid="berth-release" @click="releaseBerth">释放为空闲</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -311,5 +336,13 @@ function onMapSelect(selectedPortId: string): void {
   margin: 10px 0 0;
   font-size: 12px;
   color: #6b7c8c;
+}
+.pending-text {
+  color: #f56c6c;
+  font-weight: 600;
+}
+.pending-alert {
+  border-radius: 10px;
+  margin-bottom: 16px;
 }
 </style>

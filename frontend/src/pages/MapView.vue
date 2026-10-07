@@ -145,6 +145,7 @@ function openPortDetail(): void {
             {{ activeSummary.occupied }} / {{ activeSummary.free }}
           </el-descriptions-item>
           <el-descriptions-item label="维修泊位">{{ activeSummary.maintenance }}</el-descriptions-item>
+          <el-descriptions-item label="待核对">{{ activeSummary.pending }}</el-descriptions-item>
         </el-descriptions>
 
         <p class="dialog-sub">在港船舶</p>

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useVesselStore } from '../stores/vesselStore';
 import { usePortStore } from '../stores/portStore';
 import VesselSpecTable from '../components/common/VesselSpecTable.vue';
+import CallRevisions from '../components/common/CallRevisions.vue';
 import EmptyState from '../components/common/EmptyState.vue';
 import type { PortCall } from '../types/call';
 import { daysUntilExpiry, expiryText, powerTier, tonnageTier } from '../utils/tonnage';
@@ -19,6 +20,8 @@ const vessel = computed(() => vesselStore.vesselById(vesselId.value));
 const loaded = ref(false);
 
 const calls = computed<PortCall[]>(() => (vessel.value ? portStore.callsOfVessel(vessel.value.id) : []));
+
+const activeCalls = computed(() => calls.value.filter((c) => !c.voided));
 
 const occupancy = computed(() => {
   if (!vessel.value) return [] as Array<{ portName: string; berthNo: string; berthAt: string | null }>;
@@ -42,13 +45,18 @@ const expiryTagType = computed(() => {
 });
 
 const totals = computed(() => ({
-  ice: calls.value.reduce((sum, c) => sum + c.iceKg, 0),
-  fuel: calls.value.reduce((sum, c) => sum + c.fuelL, 0),
-  unload: calls.value.reduce((sum, c) => sum + c.unloadKg, 0),
+  ice: activeCalls.value.reduce((sum, c) => sum + c.iceKg, 0),
+  fuel: activeCalls.value.reduce((sum, c) => sum + c.fuelL, 0),
+  unload: activeCalls.value.reduce((sum, c) => sum + c.unloadKg, 0),
 }));
 
-function timelineType(call: PortCall): 'primary' | 'success' {
+function timelineType(call: PortCall): 'primary' | 'success' | 'info' {
+  if (call.voided) return 'info';
   return call.type === '进港' ? 'primary' : 'success';
+}
+
+function portNameOf(call: PortCall): string {
+  return portStore.portById(call.portId)?.name ?? '待核对归属';
 }
 
 async function bootstrap(): Promise<void> {
@@ -101,7 +109,7 @@ watch(vesselId, bootstrap);
                 {{ vessel.certificateExpiry }}
                 <el-tag size="small" :type="expiryTagType" data-testid="expiry-tag">{{ expiryText(vessel.certificateExpiry) }}</el-tag>
               </el-descriptions-item>
-              <el-descriptions-item label="累计进出港">{{ calls.length }} 次</el-descriptions-item>
+              <el-descriptions-item label="累计进出港">{{ activeCalls.length }} 次</el-descriptions-item>
               <el-descriptions-item label="累计加冰 / 加油">
                 {{ formatNumber(totals.ice, 0) }} kg / {{ formatNumber(totals.fuel, 0) }} L
               </el-descriptions-item>
@@ -123,7 +131,7 @@ watch(vesselId, bootstrap);
       </el-row>
 
       <el-card shadow="never" class="detail-card">
-        <template #header><span class="card-title">进出港记录时间线（{{ calls.length }} 条）</span></template>
+        <template #header><span class="card-title">进出港记录时间线（{{ activeCalls.length }} 条有效<template v-if="calls.length !== activeCalls.length"> · {{ calls.length - activeCalls.length }} 条已作废</template>）</span></template>
         <el-timeline v-if="calls.length" data-testid="call-timeline">
           <el-timeline-item
             v-for="call in calls"
@@ -132,13 +140,14 @@ watch(vesselId, bootstrap);
             :type="timelineType(call)"
             placement="top"
           >
-            <div class="timeline-row">
-              <el-tag size="small" :type="call.type === '进港' ? 'primary' : 'success'">{{ call.type }}</el-tag>
-              <span>泊位 {{ call.berthNo }}</span>
+            <div class="timeline-row" :class="{ 'timeline-row--void': call.voided }">
+              <el-tag size="small" :type="call.voided ? 'info' : call.type === '进港' ? 'primary' : 'success'">{{ call.voided ? '已作废' : call.type }}</el-tag>
+              <span>{{ portNameOf(call) }} · 泊位 {{ call.berthNo }}</span>
               <span>加冰 {{ formatNumber(call.iceKg, 0) }} kg</span>
               <span>加油 {{ formatNumber(call.fuelL, 0) }} L</span>
               <span>卸货 {{ formatNumber(call.unloadKg, 0) }} kg</span>
               <el-tag size="small" type="info" effect="plain">{{ call.visaStatus }}</el-tag>
+              <CallRevisions v-if="call.revisions.length" :call="call" />
             </div>
           </el-timeline-item>
         </el-timeline>
@@ -197,5 +206,9 @@ watch(vesselId, bootstrap);
   flex-wrap: wrap;
   font-size: 13px;
   color: #4b5c6d;
+}
+.timeline-row--void {
+  opacity: 0.55;
+  text-decoration: line-through;
 }
 </style>

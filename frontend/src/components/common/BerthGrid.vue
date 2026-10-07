@@ -24,12 +24,14 @@ const COLORS: Record<BerthStatus, string> = {
   空闲: '#67c23a',
   占用: '#e6a23c',
   维修: '#909399',
+  待核对: '#f56c6c',
 };
 
 const FILLS: Record<BerthStatus, string> = {
   空闲: '#f0f9eb',
   占用: '#fdf6ec',
   维修: '#f4f4f5',
+  待核对: '#fef0f0',
 };
 
 const rows = computed(() => Math.max(1, Math.ceil(props.berths.length / props.perRow)));
@@ -37,11 +39,13 @@ const width = computed(() => PAD * 2 + props.perRow * CELL_W + (props.perRow - 1
 const height = computed(() => PAD * 2 + rows.value * CELL_H + (rows.value - 1) * GAP);
 
 const legend = computed(() =>
-  (['空闲', '占用', '维修'] as BerthStatus[]).map((status) => ({
-    status,
-    color: COLORS[status],
-    count: props.berths.filter((b) => b.status === status).length,
-  })),
+  (['空闲', '占用', '待核对', '维修'] as BerthStatus[])
+    .map((status) => ({
+      status,
+      color: COLORS[status],
+      count: props.berths.filter((b) => b.status === status).length,
+    }))
+    .filter((item) => item.count > 0),
 );
 
 function cellAt(index: number): { x: number; y: number } {
@@ -94,7 +98,7 @@ function onSelect(berth: Berth): void {
           {{ berth.status }} · 水深 {{ formatNumber(berth.designDepth) }}m
         </text>
         <text :x="cellAt(index).x + 12" :y="cellAt(index).y + 64" class="berth-grid__vessel">
-          {{ berth.status === '占用' ? berth.vesselName || '未知船舶' : '—' }}
+          {{ berth.status === '占用' ? berth.vesselName || '未知船舶' : berth.status === '待核对' ? '待核对冲突' : '—' }}
         </text>
       </g>
     </svg>
