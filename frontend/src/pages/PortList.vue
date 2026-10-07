@@ -99,7 +99,18 @@ function openPort(portId: string): void {
     <header class="page__head">
       <div>
         <h1>渔港一览</h1>
-        <p class="page__sub">共 {{ overall.portCount }} 座渔港 · {{ overall.berthTotal }} 个泊位 · 在港船舶 {{ overall.occupied }} 艘 · 平均占用率 {{ percentText(overall.rate) }}</p>
+        <p class="page__sub">
+          共 {{ overall.portCount }} 座渔港 · {{ overall.berthTotal }} 个泊位 · 在港船舶 {{ overall.occupied }} 艘 · 平均占用率 {{ percentText(overall.rate) }}
+          <el-button
+            v-if="portStore.pendingReviews.length"
+            link
+            type="danger"
+            data-testid="pending-link"
+            @click="router.push('/calls')"
+          >
+            （{{ portStore.pendingReviews.length }} 条泊位占用待核对，前往处理）
+          </el-button>
+        </p>
       </div>
       <el-button type="primary" data-testid="open-port-dialog" @click="openDialog">登记渔港</el-button>
     </header>

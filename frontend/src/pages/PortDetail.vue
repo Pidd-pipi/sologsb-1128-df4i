@@ -36,10 +36,9 @@ const activeVessel = computed(() =>
 const addBerthVisible = ref(false);
 const addBerthForm = reactive({ berthNo: '', designDepth: 4.5 });
 
-const recentCalls = computed(() => {
-  const numbers = new Set(portBerths.value.map((b) => b.berthNo));
-  return portStore.callsSorted.filter((c) => numbers.has(c.berthNo)).slice(0, 8);
-});
+const recentCalls = computed(() =>
+  portStore.callsSorted.filter((c) => c.portId === portId.value).slice(0, 8),
+);
 
 const supply = computed(() => (port.value ? supplyText(port.value.supply) : '—'));
 
@@ -137,7 +136,9 @@ function onMapSelect(selectedPortId: string): void {
               <el-descriptions-item label="补给能力">{{ supply }}</el-descriptions-item>
             </el-descriptions>
             <p class="detail-hint">
-              当前占用率 {{ percentText(summary.occupancyRate) }}（占用 {{ summary.occupied }} / 空闲 {{ summary.free }} / 维修 {{ summary.maintenance }}）
+              当前占用率 {{ percentText(summary.occupancyRate) }}（占用 {{ summary.occupied }}
+              <template v-if="summary.pending"> / <b style="color: #f56c6c">待核对 {{ summary.pending }}</b></template>
+              / 空闲 {{ summary.free }} / 维修 {{ summary.maintenance }}）
             </p>
           </el-card>
         </el-col>
@@ -225,9 +226,21 @@ function onMapSelect(selectedPortId: string): void {
         <el-descriptions :column="1" size="small" border>
           <el-descriptions-item label="泊位号">{{ activeBerth.berthNo }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag size="small" :type="activeBerth.status === '占用' ? 'warning' : activeBerth.status === '维修' ? 'info' : 'success'">
+            <el-tag
+              size="small"
+              :type="activeBerth.status === '占用' ? 'warning' : activeBerth.status === '维修' ? 'info' : activeBerth.status === '待核对' ? 'danger' : 'success'"
+            >
               {{ activeBerth.status }}
             </el-tag>
+            <el-button
+              v-if="activeBerth.status === '待核对'"
+              text
+              type="danger"
+              size="small"
+              @click="router.push('/calls')"
+            >
+              去登记页核对
+            </el-button>
           </el-descriptions-item>
           <el-descriptions-item label="设计水深">{{ formatNumber(activeBerth.designDepth) }} m</el-descriptions-item>
           <el-descriptions-item label="占用渔船">

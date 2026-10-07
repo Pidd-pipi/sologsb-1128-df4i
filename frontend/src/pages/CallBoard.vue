@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
 import { usePortStore } from '../stores/portStore';
 import { useVesselStore } from '../stores/vesselStore';
@@ -8,21 +7,20 @@ import { useLocalDraft } from '../hooks/useLocalDraft';
 import { useBerthStatus } from '../hooks/useBerthStatus';
 import BerthGrid from '../components/common/BerthGrid.vue';
 import EmptyState from '../components/common/EmptyState.vue';
+import OccupancyReviewPanel from '../components/common/OccupancyReviewPanel.vue';
+import CallCorrectionDialog from '../components/common/CallCorrectionDialog.vue';
 import type { Berth } from '../types/berth';
+import type { PortCall } from '../types/call';
 import { CALL_TYPES, VISA_STATUSES, emptyCallDraft, type CallDraft, type CallType } from '../types/call';
 import { formatDateTime, formatNumber, isToday, nowLocalInputValue, toPlain } from '../utils/format';
 
-interface CallForm extends CallDraft {
-  portId: string;
-}
+interface CallForm extends CallDraft {}
 
-const router = useRouter();
 const portStore = usePortStore();
 const vesselStore = useVesselStore();
 
 const { draft, restored, savedAt, storageKey, persist, restore, clearDraft } = useLocalDraft<CallForm>('call-board', () => ({
   ...emptyCallDraft(),
-  portId: '',
   time: nowLocalInputValue(),
 }));
 const form = draft;
@@ -41,14 +39,17 @@ const vesselOptions = computed(() => vesselStore.vessels);
 
 const selectedVessel = computed(() => vesselStore.vesselById(form.value.vesselId));
 
-/** 进港只能选空闲泊位；出港只能选已占用泊位 */
+/**
+ * 进港选空闲泊位；待核对泊位也允许登记（重算后继续挂核对单）。
+ * 出港可选占用或待核对泊位 —— 待核对泊位上的船离港后，冲突可能随之消除。
+ */
 const berthOptions = computed(() => {
-  const wanted = form.value.type === '进港' ? '空闲' : '占用';
+  const allowed = form.value.type === '进港' ? ['空闲', '待核对'] : ['占用', '待核对'];
   return portStore.berths
-    .filter((b) => b.status === wanted)
+    .filter((b) => allowed.includes(b.status))
     .map((b) => ({
       value: `${b.portId}|${b.berthNo}`,
-      label: `${portStore.portById(b.portId)?.name ?? b.portId} · ${b.berthNo}`,
+      label: `${portStore.portById(b.portId)?.name ?? b.portId} · ${b.berthNo}${b.status === '待核对' ? '（待核对）' : ''}`,
       portId: b.portId,
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -71,7 +72,9 @@ const focusBerths = computed<Berth[]>(() =>
 const berthRef = computed(() => portStore.berths);
 const { summary } = useBerthStatus(berthRef, computed(() => focusPortId.value));
 
+const scopeToday = ref(true);
 const todayCalls = computed(() => portStore.callsSorted.filter((c) => isToday(c.time)));
+const tableCalls = computed(() => (scopeToday.value ? todayCalls.value : portStore.callsSorted));
 
 const todayStats = computed(() => ({
   inbound: todayCalls.value.filter((c) => c.type === '进港').length,
@@ -80,6 +83,24 @@ const todayStats = computed(() => ({
   fuel: todayCalls.value.reduce((sum, c) => sum + c.fuelL, 0),
   unload: todayCalls.value.reduce((sum, c) => sum + c.unloadKg, 0),
 }));
+
+// —— 流水更正弹窗 ——
+const correctVisible = ref(false);
+const correctingCall = ref<PortCall | null>(null);
+
+function openCorrection(callId: string): void {
+  const call = portStore.callById(callId);
+  if (!call) return;
+  correctingCall.value = call;
+  correctVisible.value = true;
+}
+
+function onCorrected(): void {
+  // 重算后若产生冲突，待核对面板会自动出现；此处给出一次提示
+  if (portStore.pendingReviews.length) {
+    ElMessage.warning('重算后仍有泊位存在冲突在港记录，请在「待核对」中保留一条');
+  }
+}
 
 function hasContent(value: CallForm): boolean {
   return (
@@ -117,7 +138,7 @@ watch(
 
 watch(
   () => form.value.type,
-  (type: CallType) => {
+  () => {
     const valid = berthOptions.value.some((opt) => opt.value === berthKey.value);
     if (!valid) berthKey.value = '';
   },
@@ -142,6 +163,7 @@ async function submit(): Promise<void> {
       vesselId: form.value.vesselId,
       type: form.value.type,
       time: form.value.time,
+      portId: form.value.portId,
       berthNo: form.value.berthNo,
       iceKg: Number(form.value.iceKg) || 0,
       fuelL: Number(form.value.fuelL) || 0,
@@ -153,7 +175,6 @@ async function submit(): Promise<void> {
     clearDraft();
     Object.assign(form.value, {
       ...emptyCallDraft(),
-      portId: '',
       time: nowLocalInputValue(),
     });
     focusPortId.value = '';
@@ -163,10 +184,6 @@ async function submit(): Promise<void> {
     submitting.value = false;
   }
 }
-
-function openVessel(vesselId: string): void {
-  void router.push(`/vessels/${vesselId}`);
-}
 </script>
 
 <template>
@@ -175,7 +192,7 @@ function openVessel(vesselId: string): void {
       <div>
         <h1>进出港登记</h1>
         <p class="page__sub">
-          选择渔船与进出港类型，填写泊位号、加冰量、加油量与卸货量，提交后自动同步泊位占用状态
+          选择渔船与进出港类型，填写泊位号、加冰量、加油量与卸货量；流水提交或更正后泊位占用自动重算，两处不再各留旧值
         </p>
       </div>
     </header>
@@ -193,6 +210,8 @@ function openVessel(vesselId: string): void {
         草稿保存在 localStorage（键 {{ storageKey }}），提交成功后会清空。
       </template>
     </el-alert>
+
+    <OccupancyReviewPanel v-if="portStore.pendingReviews.length" @correct="openCorrection" />
 
     <el-row :gutter="16">
       <el-col :lg="13" :md="24">
@@ -231,7 +250,7 @@ function openVessel(vesselId: string): void {
               <el-select
                 id="call-berth"
                 v-model="berthKey"
-                :placeholder="form.type === '进港' ? '选择空闲泊位' : '选择已占用泊位'"
+                :placeholder="form.type === '进港' ? '选择空闲泊位' : '选择占用 / 待核对泊位'"
                 style="width: 100%"
                 data-testid="call-berth"
               >
@@ -266,7 +285,6 @@ function openVessel(vesselId: string): void {
             <el-form-item>
               <el-button type="primary" :loading="submitting" data-testid="submit-call" @click="submit">保存登记</el-button>
               <el-button data-testid="clear-draft" @click="clearDraft(); ElMessage.success('草稿已清空')">清空草稿</el-button>
-              <el-button v-if="selectedVessel" text type="primary" @click="openVessel(selectedVessel.id)">查看渔船档案</el-button>
             </el-form-item>
           </el-form>
         </el-card>
@@ -297,33 +315,72 @@ function openVessel(vesselId: string): void {
             <el-button type="primary" @click="focusPortId = portStore.ports[0]?.id ?? ''">聚焦第一座渔港</el-button>
           </EmptyState>
           <p v-if="focusBerths.length" class="detail-hint">
-            占用率 {{ (summary.occupancyRate * 100).toFixed(1) }}% · 占用 {{ summary.occupied }} · 空闲 {{ summary.free }} · 维修 {{ summary.maintenance }}
+            占用率 {{ (summary.occupancyRate * 100).toFixed(1) }}% · 占用 {{ summary.occupied }}
+            <template v-if="summary.pending"> · <b class="hint-danger">待核对 {{ summary.pending }}</b></template>
+            · 空闲 {{ summary.free }} · 维修 {{ summary.maintenance }}
           </p>
         </el-card>
       </el-col>
     </el-row>
 
     <el-card shadow="never" class="detail-card">
-      <template #header><span class="card-title">今日流水（{{ todayCalls.length }} 条）</span></template>
-      <el-table :data="todayCalls" size="small" border empty-text="今日暂无进出港流水" data-testid="today-calls">
+      <template #header>
+        <div class="table-head">
+          <span class="card-title">进出港流水</span>
+          <el-radio-group v-model="scopeToday" size="small">
+            <el-radio-button :value="true">今日（{{ todayCalls.length }}）</el-radio-button>
+            <el-radio-button :value="false" data-testid="scope-all">全部（{{ portStore.callsSorted.length }}）</el-radio-button>
+          </el-radio-group>
+        </div>
+      </template>
+      <el-table :data="tableCalls" size="small" border empty-text="暂无进出港流水" data-testid="calls-table">
         <el-table-column prop="vesselName" label="船名" min-width="130" />
         <el-table-column prop="type" label="类型" width="80" />
         <el-table-column label="时间" min-width="150">
           <template #default="scope">{{ formatDateTime(scope.row.time) }}</template>
         </el-table-column>
-        <el-table-column prop="berthNo" label="泊位号" width="90" />
-        <el-table-column label="加冰 kg" min-width="100">
+        <el-table-column label="泊位" min-width="150">
+          <template #default="scope">
+            {{ portStore.portById(scope.row.portId)?.name ?? '未知渔港' }} · {{ scope.row.berthNo }}
+          </template>
+        </el-table-column>
+        <el-table-column label="加冰 kg" min-width="90">
           <template #default="scope">{{ formatNumber(scope.row.iceKg, 0) }}</template>
         </el-table-column>
-        <el-table-column label="加油 L" min-width="100">
+        <el-table-column label="加油 L" min-width="90">
           <template #default="scope">{{ formatNumber(scope.row.fuelL, 0) }}</template>
         </el-table-column>
-        <el-table-column label="卸货 kg" min-width="110">
+        <el-table-column label="卸货 kg" min-width="100">
           <template #default="scope">{{ formatNumber(scope.row.unloadKg, 0) }}</template>
         </el-table-column>
-        <el-table-column prop="visaStatus" label="签证状态" width="110" />
+        <el-table-column label="签证 / 状态" min-width="150">
+          <template #default="scope">
+            <el-tag size="small" :type="scope.row.visaStatus === '已签证' ? 'success' : 'info'">
+              {{ scope.row.visaStatus }}
+            </el-tag>
+            <el-tag v-if="scope.row.revisions?.length" size="small" type="warning" effect="plain" class="inline-tag">
+              已更正 {{ scope.row.revisions.length }}
+            </el-tag>
+            <el-tag v-if="scope.row.excludedFromOccupancy" size="small" type="danger" effect="plain" class="inline-tag">
+              不参与占用
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="scope">
+            <el-button text type="primary" size="small" data-testid="correct-call" @click="openCorrection(scope.row.id)">
+              更正
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
+
+    <CallCorrectionDialog
+      v-model="correctVisible"
+      :call="correctingCall"
+      @corrected="onCorrected"
+    />
   </section>
 </template>
 
@@ -376,5 +433,17 @@ function openVessel(vesselId: string): void {
   margin: 10px 0 0;
   font-size: 12px;
   color: #6b7c8c;
+}
+.hint-danger {
+  color: #f56c6c;
+}
+.table-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.inline-tag {
+  margin-left: 4px;
 }
 </style>

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ElMessage } from 'element-plus';
 import { useVesselStore } from '../stores/vesselStore';
 import { usePortStore } from '../stores/portStore';
 import VesselSpecTable from '../components/common/VesselSpecTable.vue';
 import EmptyState from '../components/common/EmptyState.vue';
+import CallCorrectionDialog from '../components/common/CallCorrectionDialog.vue';
 import type { PortCall } from '../types/call';
 import { daysUntilExpiry, expiryText, powerTier, tonnageTier } from '../utils/tonnage';
 import { formatDateTime, formatNumber } from '../utils/format';
@@ -20,14 +22,36 @@ const loaded = ref(false);
 
 const calls = computed<PortCall[]>(() => (vessel.value ? portStore.callsOfVessel(vessel.value.id) : []));
 
+const correctVisible = ref(false);
+const correctingCall = ref<PortCall | null>(null);
+
+function openCorrection(call: PortCall): void {
+  correctingCall.value = call;
+  correctVisible.value = true;
+}
+
+function onCorrected(call: PortCall): void {
+  ElMessage.success(`${call.vesselName} 的流水已更正，泊位占用已重算`);
+  if (call.vesselId !== vesselId.value) {
+    // 更正时改选了别的渔船，跳回登记页或提示
+    ElMessage.info('该流水已改挂到其他渔船');
+  }
+}
+
 const occupancy = computed(() => {
-  if (!vessel.value) return [] as Array<{ portName: string; berthNo: string; berthAt: string | null }>;
+  if (!vessel.value) return [] as Array<{ portName: string; berthNo: string; berthAt: string | null; status: string }>;
+  const vid = vessel.value.id;
   return portStore.berths
-    .filter((b) => b.vesselId === vessel.value!.id && b.status === '占用')
+    .filter((b) =>
+      b.status === '占用'
+        ? b.vesselId === vid
+        : b.status === '待核对' && b.candidateVesselIds?.includes(vid),
+    )
     .map((b) => ({
       portName: portStore.portById(b.portId)?.name ?? b.portId,
       berthNo: b.berthNo,
       berthAt: b.berthAt,
+      status: b.status,
     }));
 });
 
@@ -114,6 +138,11 @@ watch(vesselId, bootstrap);
             <el-table :data="occupancy" size="small" border empty-text="该船当前不在港">
               <el-table-column prop="portName" label="渔港" min-width="130" />
               <el-table-column prop="berthNo" label="泊位号" width="90" />
+              <el-table-column label="状态" width="90">
+                <template #default="scope">
+                  <el-tag size="small" :type="scope.row.status === '待核对' ? 'danger' : 'warning'">{{ scope.row.status }}</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column label="靠泊时间" min-width="150">
                 <template #default="scope">{{ formatDateTime(scope.row.berthAt) }}</template>
               </el-table-column>
@@ -139,6 +168,13 @@ watch(vesselId, bootstrap);
               <span>加油 {{ formatNumber(call.fuelL, 0) }} L</span>
               <span>卸货 {{ formatNumber(call.unloadKg, 0) }} kg</span>
               <el-tag size="small" type="info" effect="plain">{{ call.visaStatus }}</el-tag>
+              <el-tag v-if="call.revisions?.length" size="small" type="warning" effect="plain">
+                已更正（留底 {{ call.revisions.length }}）
+              </el-tag>
+              <el-tag v-if="call.excludedFromOccupancy" size="small" type="danger" effect="plain">不参与占用</el-tag>
+              <el-button text type="primary" size="small" data-testid="timeline-correct" @click="openCorrection(call)">
+                更正
+              </el-button>
             </div>
           </el-timeline-item>
         </el-timeline>
@@ -151,6 +187,8 @@ watch(vesselId, bootstrap);
     <EmptyState v-else-if="loaded" title="未找到该渔船" description="该渔船档案可能尚未建立，返回检索页建档后再查看。">
       <el-button type="primary" @click="router.push('/vessels')">返回渔船检索</el-button>
     </EmptyState>
+
+    <CallCorrectionDialog v-model="correctVisible" :call="correctingCall" @corrected="onCorrected" />
   </section>
 </template>
 

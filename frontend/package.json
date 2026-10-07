@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "preview": "vite preview --port 5173"
+    "preview": "vite preview --port 5173",
+    "verify": "esbuild scripts/verify-reconcile.ts scripts/verify-migration.ts scripts/verify-store-flow.ts --bundle --platform=node --format=esm --outdir=node_modules/.verify --log-level=error && node node_modules/.verify/verify-reconcile.js && node node_modules/.verify/verify-migration.js && node node_modules/.verify/verify-store-flow.js"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -18,6 +19,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.4",
+    "esbuild": "^0.21.5",
+    "fake-indexeddb": "^6.2.5",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
     "vue-tsc": "^2.1.6"

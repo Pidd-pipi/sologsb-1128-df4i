@@ -14,17 +14,25 @@ function summarize(portId: string, list: Berth[]): BerthSummary {
   const total = list.length;
   const occupied = list.filter((b) => b.status === '占用').length;
   const maintenance = list.filter((b) => b.status === '维修').length;
-  const free = total - occupied - maintenance;
+  const pending = list.filter((b) => b.status === '待核对').length;
+  const free = total - occupied - maintenance - pending;
+  // 待核对泊位的候选船也算在港（尚未人工剔除前仍停在港内），但不计入占用率
+  const pendingCandidates = list.reduce(
+    (sum, b) => (b.status === '待核对' ? sum + Math.max(b.candidateVesselIds?.length ?? 1, 1) : sum),
+    0,
+  );
   return {
     portId,
     total,
     occupied,
     free,
     maintenance,
+    pending,
     occupancyRate: total === 0 ? 0 : occupied / total,
-    inPortCount: occupied,
+    inPortCount: occupied + pendingCandidates,
     freeBerths: list.filter((b) => b.status === '空闲'),
     occupiedBerths: list.filter((b) => b.status === '占用'),
+    pendingBerths: list.filter((b) => b.status === '待核对'),
   };
 }
 
@@ -43,7 +51,9 @@ export function useBerthStatus(berths: Ref<Berth[]>, portId?: Ref<string> | stri
   });
 
   const summary = computed<BerthSummary>(() => summarize(roomId.value, scope.value));
-  const inPortVessels = computed(() => scope.value.filter((b) => b.status === '占用' && b.vesselName));
+  const inPortVessels = computed(() =>
+    scope.value.filter((b) => (b.status === '占用' || b.status === '待核对') && b.vesselName),
+  );
   const freeBerths = computed(() => scope.value.filter((b) => b.status === '空闲'));
 
   function summaryOf(id: string): BerthSummary {

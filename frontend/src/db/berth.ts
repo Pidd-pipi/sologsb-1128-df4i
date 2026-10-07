@@ -17,7 +17,11 @@ export interface SeedOccupancy {
   berthAt: string;
 }
 
-/** 演示数据中的初始占用 / 维修泊位 */
+/**
+ * 演示数据中的初始占用 / 维修泊位。
+ * 注意：v4 起泊位占用以进出港流水为唯一事实源，首次播种后会由 reconcile 按流水重算覆盖；
+ * 这里保留与历史版本一致的初始值，v3 升级路径与首次播种结果相同，不会误报「占用不符」。
+ */
 export const SEED_OCCUPANCY: Record<string, SeedOccupancy[]> = {
   'p-1001': [
     { berthNo: 'B01', vesselId: 'v-2001', vesselName: '浙象渔05123', status: '占用', berthAt: hoursAgo(5) },

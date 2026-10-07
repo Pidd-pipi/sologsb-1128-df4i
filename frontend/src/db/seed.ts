@@ -4,6 +4,7 @@ import type { PortCall } from '../types/call';
 import { toPlain } from '../utils/format';
 import { db } from './index';
 import { buildBerthRecords } from './berth';
+import { reconcile } from './reconcile';
 
 function hoursAgo(hours: number): string {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
@@ -175,11 +176,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙象渔05123',
     type: '进港',
     time: hoursAgo(5),
+    portId: 'p-1001',
     berthNo: 'B01',
     iceKg: 1200,
     fuelL: 800,
     unloadKg: 8600,
     visaStatus: '已签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: hoursAgo(5),
   },
   {
@@ -188,11 +193,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙象渔05288',
     type: '进港',
     time: hoursAgo(3),
+    portId: 'p-1001',
     berthNo: 'B02',
     iceKg: 900,
     fuelL: 1200,
     unloadKg: 12400,
     visaStatus: '已签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: hoursAgo(3),
   },
   {
@@ -201,11 +210,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙普渔13208',
     type: '进港',
     time: hoursAgo(2),
+    portId: 'p-1002',
     berthNo: 'B01',
     iceKg: 600,
     fuelL: 0,
     unloadKg: 5200,
     visaStatus: '待签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: hoursAgo(2),
   },
   {
@@ -214,11 +227,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙岱渔07156',
     type: '进港',
     time: hoursAgo(1),
+    portId: 'p-1003',
     berthNo: 'B01',
     iceKg: 300,
     fuelL: 260,
     unloadKg: 2100,
     visaStatus: '免签',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: hoursAgo(1),
   },
   {
@@ -227,11 +244,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙岭渔09342',
     type: '出港',
     time: daysAgo(1),
+    portId: 'p-1002',
     berthNo: 'B02',
     iceKg: 0,
     fuelL: 420,
     unloadKg: 0,
     visaStatus: '已签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: daysAgo(1),
   },
   {
@@ -240,11 +261,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙普渔13566',
     type: '进港',
     time: daysAgo(1),
+    portId: 'p-1002',
     berthNo: 'B02',
     iceKg: 480,
     fuelL: 300,
     unloadKg: 3600,
     visaStatus: '已签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: daysAgo(1),
   },
   {
@@ -253,11 +278,15 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙象渔05123',
     type: '出港',
     time: daysAgo(2),
+    portId: 'p-1001',
     berthNo: 'B01',
     iceKg: 0,
     fuelL: 950,
     unloadKg: 0,
     visaStatus: '已签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: daysAgo(2),
   },
   {
@@ -266,17 +295,22 @@ export const SEED_CALLS: PortCall[] = [
     vesselName: '浙普渔13208',
     type: '出港',
     time: daysAgo(4),
+    portId: 'p-1002',
     berthNo: 'B03',
     iceKg: 200,
     fuelL: 540,
     unloadKg: 0,
     visaStatus: '待签证',
+    excludedFromOccupancy: false,
+    revisions: [],
+    correctedAt: null,
     createdAt: daysAgo(4),
   },
 ];
 
 /**
  * 首次进入时写入演示数据，并为缺少泊位记录的渔港补齐泊位。
+ * 泊位占用一律按流水重算（reconcile），保证「泊位」和「流水」两处不留互相矛盾的旧值。
  * 写库前统一 toPlain 脱代理，避免 DataCloneError。
  */
 export async function ensureSeedData(): Promise<void> {
@@ -286,11 +320,33 @@ export async function ensureSeedData(): Promise<void> {
     await db.vessels.bulkPut(toPlain(SEED_VESSELS));
     await db.calls.bulkPut(toPlain(SEED_CALLS));
   }
+
+  let berths = await db.berths.toArray();
   const ports = await db.ports.toArray();
+  let added = false;
   for (const port of ports) {
-    const existing = await db.berths.where('portId').equals(port.id).count();
-    if (existing === 0) {
-      await db.berths.bulkPut(toPlain(buildBerthRecords(port)));
+    const existing = berths.filter((b) => b.portId === port.id);
+    if (existing.length === 0) {
+      const built = buildBerthRecords(port);
+      await db.berths.bulkPut(toPlain(built));
+      berths = berths.concat(built);
+      added = true;
     }
+  }
+
+  // 首次播种（或刚补过泊位）时按流水统一重算占用；演示数据本身一致，不会产生待核对单
+  const calls = await db.calls.toArray();
+  if (portCount === 0 || added) {
+    const result = reconcile({
+      ports,
+      berths,
+      calls,
+      existingReviews: await db.reviews.toArray(),
+      mode: 'reconcile',
+    });
+    await db.transaction('rw', db.berths, db.reviews, async () => {
+      await db.berths.bulkPut(toPlain(result.berths));
+      if (result.reviews.length) await db.reviews.bulkPut(toPlain(result.reviews));
+    });
   }
 }

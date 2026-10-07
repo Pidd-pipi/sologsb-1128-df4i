@@ -42,10 +42,10 @@ sologsb-1128/
 │   ├── nginx.conf              # try_files $uri $uri/ /index.html + gzip
 │   ├── public/favicon.svg
 │   └── src/
-│       ├── types/              # port.ts / vessel.ts / call.ts / berth.ts（4 个数据模型）
+│       ├── types/              # port.ts / vessel.ts / call.ts / berth.ts / review.ts（5 个数据模型）
 │       ├── stores/             # portStore.ts / vesselStore.ts / uiStore.ts
-│       ├── db/                 # index.ts（Dexie v1→v3 迁移）/ berth.ts / seed.ts
-│       ├── components/common/  # PortCard / BerthGrid / VesselSpecTable / MapPanel / EmptyState
+│       ├── db/                 # index.ts（Dexie v1→v4 迁移）/ berth.ts / reconcile.ts（占用重算）/ seed.ts
+│       ├── components/common/  # PortCard / BerthGrid / VesselSpecTable / MapPanel / EmptyState / OccupancyReviewPanel / CallCorrectionDialog
 │       ├── hooks/              # useAmapLoader / useBerthStatus / useLocalDraft
 │       ├── pages/              # PortList / PortDetail / VesselList / VesselDetail / CallBoard / MapView
 │       ├── router/index.ts
@@ -61,7 +61,7 @@ sologsb-1128/
 | `/ports/:id` | 渔港详情：基本信息与补给能力、SVG 泊位网格（点击查看占用船舶）、在港船舶与近日流水 | 四个模型 |
 | `/vessels` | 渔船检索：按作业类型、主机功率区间、总吨位与船籍港组合查询 | FishingVessel |
 | `/vessels/:id` | 渔船档案详情：主尺度、主机功率、作业类型、证书有效期与进出港时间线 | FishingVessel、PortCall |
-| `/calls` | 进出港登记：选择渔船与类型，填写泊位号、加冰量、加油量、卸货量并同步泊位状态 | PortCall、Berth、FishingVessel |
+| `/calls` | 进出港登记：选择渔船与类型，填写泊位号、加冰量、加油量、卸货量并同步泊位状态；已登记流水可直接更正，提交后泊位占用整体重算；冲突与升级旧数据在此列待核对 | PortCall、Berth、FishingVessel、OccupancyReview |
 | `/map` | 渔港与在港渔船分布：高德 JS API 标记，未配置 key 时为 SVG 网格视图，点选弹出泊位占用摘要 | FishingPort、Berth |
 
 ## 数据存储说明
@@ -70,9 +70,19 @@ sologsb-1128/
   - `v1`：建 `ports`、`vessels` 表
   - `v2`：新增 `calls` 表与 `vesselId` 索引
   - `v3`：新增 `berths` 表，并按每个渔港登记的泊位数生成初始泊位记录
+  - `v4`：流水锚定到 `portId + berthNo`、新增 `reviews`（待核对）表；泊位占用改为**以进出港流水为唯一事实源统一重算**，旧流水自动补港口信息，旧泊位占用与重算结果对不上时列成待核对
 - **表单草稿走 localStorage**（键前缀 `gbfishport:draft:`），例如进出港登记草稿 `gbfishport:draft:call-board`，提交成功后自动清空。
 - 首次打开会自动写入一组演示数据（4 座渔港、6 艘渔船、8 条进出港流水与对应泊位），便于直接查看各页面效果。
 - 容器无状态：不使用数据库服务、不挂载命名卷，清空浏览器站点数据即可重置。
+
+## 流水更正与泊位占用重算
+
+值班员点错船或泊位时不再需要「另补一条冲抵」，直接在进出港登记页（或渔船档案时间线）点「更正」：
+
+1. **以流水为唯一事实源**：同一条靠泊在泊位与流水两处都有记录，流水一新增或更正，`db/reconcile.ts` 就按全部流水时间序回放（进港占用 / 出港释放），整体重算泊位占用，泊位上不再保留会过期的旧值。
+2. **冲突先列待核对**：重算后同一泊位出现两条（及以上）冲突的在港记录时，泊位置为红色「待核对」，并在登记页顶部生成核对单；值班员逐条勾选实际靠泊的一条「保留」，其余流水仍保留可查，但标记为不参与占用；也可以两条都不留、泊位置空。后续若补登了出港流水，冲突消失时待核对单会自动核销。
+3. **已签证留底**：每次更正都会在流水的 `revisions` 中留下更正前原样（船、类型、时间、泊位、物资量、签证状态、更正原因、操作人），更正弹窗内可直接查看；已签证流水更正时会额外提示。
+4. **旧数据升级核对**：v4 升级时为旧流水推断并回填 `portId`（泊位占用记录 → 同船流水 → 船籍港逐级兜底），随后按流水重算；旧泊位占用与重算结果对不上（如幽灵占用）、流水指向不存在的泊位、或港口信息推断不出的，分别列成 `occupancy-mismatch` / `berth-missing` / `port-unknown` 待核对，由值班员在登记页处理。核对结论持久化在 `reviews` 表，重算不会覆盖人工结论。
 
 ## 高德地图 Key（可选）
 
